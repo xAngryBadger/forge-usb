@@ -1,4 +1,5 @@
 use serde::Serialize;
+use std::os::unix::fs::FileTypeExt;
 use std::path::PathBuf;
 use tauri::command;
 
@@ -147,16 +148,44 @@ fn unmount_device(device: String) -> Result<bool, String> {
     Ok(true)
 }
 
+fn validate_path_no_shell_injection(path: &str) -> Result<(), String> {
+    let forbidden = [';', '|', '$', '`', '&', '>', '<', '(', ')', '{', '}', '\n', '\r', '\\', '!', '~', '*'];
+    if path.chars().any(|c| forbidden.contains(&c)) {
+        return Err(format!("Path contains forbidden characters: {}", path));
+    }
+    Ok(())
+}
+
+fn is_block_device(path: &PathBuf) -> bool {
+    path.metadata().map(|m| m.file_type().is_block_device()).unwrap_or(false)
+}
+
 #[command]
 fn write_iso_to_device(iso_path: String, device: String) -> Result<bool, String> {
+    if !iso_path.starts_with('/') {
+        return Err("ISO path must be absolute".to_string());
+    }
+    validate_path_no_shell_injection(&iso_path)?;
+
+    if !device.starts_with("/dev/") && !device.starts_with("/sys/block/") {
+        return Err("Device path must be under /dev/ or /sys/block/".to_string());
+    }
+    validate_path_no_shell_injection(&device)?;
+
     let iso = PathBuf::from(&iso_path);
     if !iso.exists() {
         return Err(format!("ISO not found: {}", iso_path));
+    }
+    if !iso.is_file() {
+        return Err(format!("ISO path is not a file: {}", iso_path));
     }
 
     let dev = PathBuf::from(&device);
     if !dev.exists() {
         return Err(format!("Device not found: {}", device));
+    }
+    if !is_block_device(&dev) {
+        return Err(format!("Not a block device: {}", device));
     }
 
     let unmount_result = unmount_device(device.clone())?;
@@ -165,13 +194,11 @@ fn write_iso_to_device(iso_path: String, device: String) -> Result<bool, String>
     }
 
     let status = std::process::Command::new("dd")
-        .args([
-            &format!("if={}", iso_path),
-            &format!("of={}", device),
-            "bs=4M",
-            "status=progress",
-            "conv=fsync",
-        ])
+        .arg(format!("if={}", iso_path))
+        .arg(format!("of={}", device))
+        .arg("bs=4M")
+        .arg("status=progress")
+        .arg("conv=fsync")
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
