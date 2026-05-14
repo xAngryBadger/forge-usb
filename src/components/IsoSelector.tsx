@@ -9,6 +9,7 @@ interface IsoSelectorProps {
 }
 
 export function IsoSelector({ isos, selected, onSelect, onBrowse }: IsoSelectorProps) {
+  const selectedPath = selected?.path ?? null
   return (
     <div
       className="rounded-lg p-4 border"
@@ -45,7 +46,7 @@ export function IsoSelector({ isos, selected, onSelect, onBrowse }: IsoSelectorP
       ) : isos.length > 0 ? (
         <div className="space-y-1.5">
           {isos.map((iso) => {
-            const isSelected = false
+            const isSelected = selectedPath === iso.path
             return (
               <button
                 key={iso.path}
